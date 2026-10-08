@@ -45,8 +45,14 @@ def scrape_meeting(fetcher: Fetcher, conn: sqlite3.Connection, d: date, venue: s
     meeting_id = f"{d.isoformat()}_{venue}"
     racedate = d.strftime("%Y/%m/%d")
 
+    # HKJC occasionally serves an empty "no information" page for a race that exists; refetch once before giving up.
     def results_page(n):
-        return parse_results(fetcher.get(page_url("localresults", racedate=racedate, Racecourse=venue, RaceNo=n)))
+        url = page_url("localresults", racedate=racedate, Racecourse=venue, RaceNo=n)
+        return parse_results(fetcher.get(url)) or parse_results(fetcher.get(url, refresh=True))
+
+    def sectionals_page(n):
+        url = page_url("displaysectionaltime", racedate=d.strftime("%d/%m/%Y"), RaceNo=n)
+        return parse_sectionals(fetcher.get(url)) or parse_sectionals(fetcher.get(url, refresh=True))
 
     first = results_page(1)
     races = []
@@ -56,7 +62,9 @@ def scrape_meeting(fetcher: Fetcher, conn: sqlite3.Connection, d: date, venue: s
         races.append(first)
         for n in first["race_nos"][1:]:
             r = results_page(n)
-            if r is not None:
+            if r is None:
+                log.warning("%s %s: race %d is listed but its results page is empty", d, venue, n)
+            else:
                 races.append(r)
     # Abandoned meetings (race number 0) and voided races list runners but have no finishers; skip them.
     skipped = [r["race_no"] for r in races if not any(h["finish_pos"] for h in r["runners"])]
@@ -69,9 +77,7 @@ def scrape_meeting(fetcher: Fetcher, conn: sqlite3.Connection, d: date, venue: s
                      (meeting_id, d.isoformat(), venue, season_of(d), len(races)))
         for r in races:
             store_race(conn, meeting_id, r)
-            secs = parse_sectionals(fetcher.get(page_url(
-                "displaysectionaltime", racedate=d.strftime("%d/%m/%Y"), RaceNo=r["race_no"])))
-            store_sectionals(conn, race_id(meeting_id, r["race_no"]), secs)
+            store_sectionals(conn, race_id(meeting_id, r["race_no"]), sectionals_page(r["race_no"]))
     return len(races)
 
 
