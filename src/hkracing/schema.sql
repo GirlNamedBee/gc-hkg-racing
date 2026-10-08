@@ -29,7 +29,40 @@ CREATE TABLE IF NOT EXISTS horses (
     name         TEXT,
     origin       TEXT,
     sex          TEXT,
-    foaled       DATE
+    foaled       DATE,
+    colour       TEXT,
+    import_type  TEXT,                      -- PP, PPG, ISG, ...
+    sire         TEXT,
+    dam          TEXT,
+    dam_sire     TEXT
+);
+
+-- Every HK run in a horse's profile form record (back past our 10 seasons), with pre-race rating and gear.
+CREATE TABLE IF NOT EXISTS horse_form (
+    horse_id       TEXT NOT NULL REFERENCES horses(horse_id),
+    race_date      DATE NOT NULL,
+    venue          TEXT NOT NULL,
+    race_no        INTEGER NOT NULL,
+    race_index     INTEGER,
+    season         TEXT,
+    finish_status  TEXT,
+    finish_pos     INTEGER,
+    track          TEXT,                    -- e.g. Turf / "B", AWT
+    distance_m     INTEGER,
+    going          TEXT,                    -- abbreviated: G, GF, GD, WS, ...
+    class          TEXT,
+    draw           INTEGER,
+    rating         INTEGER,                 -- rating going into the race
+    trainer        TEXT,
+    jockey         TEXT,
+    lbw            REAL,
+    win_odds       REAL,
+    weight_lb      INTEGER,
+    running_pos    TEXT,
+    finish_time_s  REAL,
+    body_weight_lb INTEGER,
+    gear           TEXT,
+    PRIMARY KEY (horse_id, race_date, race_no)
 );
 
 -- One row per runner per race: pre-race declarations plus result.
@@ -40,7 +73,7 @@ CREATE TABLE IF NOT EXISTS runners (
     draw           INTEGER,
     weight_lb      INTEGER,                 -- weight carried
     body_weight_lb INTEGER,                 -- declared horse weight
-    rating         INTEGER,
+    rating         INTEGER,                 -- pre-race rating (from horse_form)
     jockey         TEXT,
     trainer        TEXT,
     gear           TEXT,
