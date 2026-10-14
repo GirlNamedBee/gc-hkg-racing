@@ -10,6 +10,13 @@ See the plan in the project files: `plan/hk-racing-model-plan.md`.
 - `src/hkracing/results.py`: parsers for the fixture calendar, LocalResults and sectional-time pages.
 - `src/hkracing/scrape.py`: finds each season's meetings from the fixture calendar, then stores every race's results and sectionals.
 - `src/hkracing/validate.py`: per-season completeness report (HKJC numbers races 1..N each season, so gaps show up).
+- `src/hkracing/standards.py`: HKJC standard times (current season only; HKJC doesn't publish old ones).
+- `src/hkracing/speed.py`: speed figures. Fits course pars, class offsets and a daily track variant to winning
+  times (starting from the HKJC standards), then rates every runner's time against them. One point is about one
+  length at 1200m; a typical Class 4 winner is 80.
+- `src/hkracing/features.py`: pre-race features per starter (form figures, early speed, draw, jockey/trainer, fitness...).
+- `src/hkracing/model.py`: conditional logit win model, combined with the market in a second logit, evaluated
+  walk-forward one season at a time.
 - `data/` is git-ignored (raw HTML cache and database).
 
 ## Setup
@@ -28,6 +35,12 @@ See the plan in the project files: `plan/hk-racing-model-plan.md`.
 Re-running is cheap: pages already in `data/cache/` are parsed from disk, so the database can be rebuilt
 offline by deleting it and running the same command. `horse_id` is HKJC's full id (e.g. `HK_2022_H108`),
 because brand codes like `H108` get reused over the years.
+
+## Model
+
+    pip install -e ".[model]"
+    python -m hkracing.standards     # once a season
+    python -m hkracing.model         # rebuilds speed figures, then writes data/reports/walk_forward.md
 
 ## Data etiquette
 
