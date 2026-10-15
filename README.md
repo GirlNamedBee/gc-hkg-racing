@@ -14,9 +14,13 @@ See the plan in the project files: `plan/hk-racing-model-plan.md`.
 - `src/hkracing/speed.py`: speed figures. Fits course pars, class offsets and a daily track variant to winning
   times (starting from the HKJC standards), then rates every runner's time against them. One point is about one
   length at 1200m; a typical Class 4 winner is 80.
-- `src/hkracing/features.py`: pre-race features per starter (form figures, early speed, draw, jockey/trainer, fitness...).
+- `src/hkracing/sectionals.py`: per-run sectional measures: last-400m speed against the course par and against
+  the rest of the field, and figures adjusted for race shape (how the pace suited the horse's running position).
+- `src/hkracing/features.py`: pre-race features per starter (form figures, sectionals, early speed, draw,
+  jockey/trainer, fitness...).
 - `src/hkracing/model.py`: conditional logit win model, combined with the market in a second logit, evaluated
-  walk-forward one season at a time.
+  walk-forward one season at a time. The report also tests whether the features add anything to the market
+  odds on their own ("market increment").
 - `data/` is git-ignored (raw HTML cache and database).
 
 ## Setup

@@ -7,6 +7,10 @@ Stage A (fundamental):  p_i = exp(β·x_i) / Σ_j exp(β·x_j) over the runners 
 Stage B (combined):     p_i ∝ exp(α·log pA_i + γ·log pMarket_i), where pMarket is the final win odds with the
                         takeout stripped, (1/odds) / Σ(1/odds).
 
+Market increment (a diagnostic, not used for prices): a one-stage conditional logit on log pMarket plus every
+feature, walk-forward the same way. If the features carry information the final odds don't, it scores above
+the market alone; the gain is reported per race with its standard error.
+
 Walk-forward: for each test season, stage A is fitted on every earlier season, and stage B on the stage A
 predictions those earlier seasons got when they were themselves the test season (so stage B only ever sees
 genuinely out-of-sample stage A probabilities). The first test season has no stage B.
@@ -111,7 +115,8 @@ def score(df: pd.DataFrame, col: str) -> dict:
     return {"log_loss": ll, "r2": 1 - ll / ll0}
 
 
-def walk_forward(df: pd.DataFrame, first_train: str, first_test: str, l2: float = 1.0):
+def walk_forward(df: pd.DataFrame, first_train: str, first_test: str, l2: float = 1.0,
+                 features: list[str] = FEATURES):
     seasons = sorted(df.season.unique())
     tests = [s for s in seasons if s >= first_test]
     oos = []
@@ -119,8 +124,8 @@ def walk_forward(df: pd.DataFrame, first_train: str, first_test: str, l2: float 
     for season in tests:
         train = df[(df.season >= first_train) & (df.season < season)]
         test = df[df.season == season].copy()
-        a = ConditionalLogit(l2=l2).fit(train[FEATURES], train.race_id, train.won)
-        test["p_model"] = a.predict(test[FEATURES], test.race_id)
+        a = ConditionalLogit(l2=l2).fit(train[features], train.race_id, train.won)
+        test["p_model"] = a.predict(test[features], test.race_id)
         test["p_combined"] = np.nan
         alpha = gamma = np.nan
         if oos:
@@ -142,6 +147,27 @@ def walk_forward(df: pd.DataFrame, first_train: str, first_test: str, l2: float 
     return pd.DataFrame(rows), pd.concat(oos), a
 
 
+def market_increment(df: pd.DataFrame, first_train: str, first_test: str, l2: float = 1.0,
+                     features: list[str] = FEATURES) -> dict:
+    """Walk-forward log-likelihood gain per race of log pMarket + features over log pMarket alone."""
+    seasons = [s for s in sorted(df.season.unique()) if s >= first_test]
+    ll = {}
+    for name, cols in (("market", []), ("market+features", features)):
+        out = []
+        for season in seasons:
+            train = df[(df.season >= first_train) & (df.season < season)]
+            test = df[df.season == season]
+            X = lambda d: np.c_[np.log(d.p_market.to_numpy()), d[cols].to_numpy()]
+            m = ConditionalLogit(l2=l2).fit(X(train), train.race_id, train.won)
+            out.append(test.assign(p=m.predict(X(test), test.race_id)))
+        o = pd.concat(out)
+        _, starts = _groups(o.race_id.to_numpy())
+        ll[name] = np.add.reduceat(o.won.to_numpy() * np.log(np.clip(o.p.to_numpy(), 1e-12, 1)), starts)
+    gain = ll["market+features"] - ll["market"]
+    return {"seasons": f"{seasons[0]}–{seasons[-1]}", "races": len(gain), "gain_per_race": gain.mean(),
+            "se": gain.std() / np.sqrt(len(gain)), "z": gain.mean() / (gain.std() / np.sqrt(len(gain)))}
+
+
 def betting(df: pd.DataFrame, col: str, edges=(1.0, 1.1, 1.2, 1.3, 1.5)) -> pd.DataFrame:
     """Flat $1 win bets wherever p × final odds exceeds the edge. HK odds include the stake."""
     out = []
@@ -159,7 +185,7 @@ def calibration(df: pd.DataFrame, col: str, bins=(0, .02, .05, .1, .15, .2, .3, 
                                             actual=("won", "mean")).reset_index()
 
 
-def report(results, oos, final, path: Path) -> str:
+def report(results, oos, final, path: Path, increment: dict | None = None) -> str:
     pooled = oos[oos.p_combined.notna()]
     lines = ["# Walk-forward evaluation", "",
              "Pseudo-R² is McFadden's, against a model that gives every runner 1/field. Higher is better.",
@@ -170,6 +196,11 @@ def report(results, oos, final, path: Path) -> str:
              f"({pooled.race_id.nunique()} races)", ""]
     pooled_rows = [{"model": c, **score(pooled, c)} for c in ("p_market", "p_model", "p_combined")]
     lines += [pd.DataFrame(pooled_rows).to_markdown(index=False, floatfmt=".4f"), "",
+              "## Market increment", "",
+              "Walk-forward one-stage logit on log market probability plus every feature, against log market "
+              "probability alone. Gain is in log-likelihood per race; above zero means the features know "
+              "something the final odds don't.", "",
+              pd.DataFrame([increment]).to_markdown(index=False, floatfmt=".5f") if increment else "(not run)", "",
               "## Stage A weights (last fit, standardised features)", "",
               pd.DataFrame({"feature": FEATURES, "coef": final.coef_, "se": final.se_,
                             "z": final.coef_ / final.se_}).to_markdown(index=False, floatfmt=".3f"), "",
@@ -199,10 +230,11 @@ def main(argv: list[str] | None = None) -> None:
     conn = connect(args.db)
     if not args.skip_speed:
         build_speed(conn)
-    df = build_features(conn)
+    df = build_features(conn, args.first_test)
     df = df.sort_values(["race_date", "race_id"], kind="stable").reset_index(drop=True)
     results, oos, final = walk_forward(df, args.first_train, args.first_test, args.l2)
-    print(report(results, oos, final, Path(args.report)))
+    increment = market_increment(df, args.first_train, results.season.iloc[1], args.l2)
+    print(report(results, oos, final, Path(args.report), increment))
     oos[["race_id", "horse_id", "season", "won", "win_odds", "p_market", "p_model", "p_combined"]] \
         .to_csv(Path(args.report).with_name("walk_forward_predictions.csv.gz"), index=False)
 

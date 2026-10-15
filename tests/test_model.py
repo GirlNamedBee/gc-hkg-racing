@@ -7,6 +7,7 @@ import pandas as pd
 
 from hkracing.db import connect
 from hkracing.model import ConditionalLogit, race_log_loss
+from hkracing.sectionals import run_measures
 from hkracing.speed import build as build_speed
 from hkracing.standards import parse_standard_time, parse_standards, store_standards
 
@@ -81,3 +82,25 @@ def test_race_log_loss_uniform():
     won = np.array([1, 0, 0, 0, 0, 0.5, 0.5, 0, 0])  # second race is a dead heat
     p = np.r_[np.full(4, 1 / 4), np.full(5, 1 / 5)]
     assert math.isclose(race_log_loss(p, won, race), (math.log(4) + math.log(5)) / 2)
+
+
+def test_sectional_measures():
+    conn = _toy_db(slow_day_factor=1.0)
+    build_speed(conn)
+    # Every race: horse k finishes k-th; horse 2 led early but came home slowest, horse 0 closed fastest.
+    for rid, hid, ft in conn.execute("SELECT race_id, horse_id, finish_time_s FROM runners").fetchall():
+        k = int(hid[-1])
+        l400 = {0: 22.6, 1: 23.0, 2: 23.6}[k]
+        conn.execute("UPDATE runners SET running_pos = ? WHERE race_id = ? AND horse_id = ?",
+                     (f"{3 - k} {3 - k} {k + 1}", rid, hid))
+        first = (ft - l400) / 2
+        for no, t in enumerate([first, ft - l400 - first, l400], start=1):
+            conn.execute("INSERT INTO sectionals (race_id, horse_id, section_no, time_s) VALUES (?, ?, ?, ?)",
+                         (rid, hid, no, t))
+    m = run_measures(conn, fit_before="2026/27").set_index("horse_id")
+    # 0.4s over the last 400m (~23s) is about 2.9 lengths; the median finisher is horse 1.
+    assert 2.6 < m.loc["H010", "close_rel"] < 3.2
+    assert m.loc["H011", "close_rel"] == 0
+    assert m.loc["H012", "close_rel"] < -3
+    assert abs(m.loc["H010", "late_fig"]) < 0.1  # winners set the par
+    assert m.loc["H012", "early_fig"] > m.loc["H010", "early_fig"]
