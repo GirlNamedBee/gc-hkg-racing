@@ -137,3 +137,26 @@ CREATE TABLE IF NOT EXISTS trial_runners (
     comment      TEXT,
     PRIMARY KEY (trial_id, horse_id)
 );
+
+-- Trackwork (morning work), one row per piece of work (hkracing.trackwork). Only horses still in training
+-- when scraped have a trackwork page, so older seasons are only partly covered.
+CREATE TABLE IF NOT EXISTS trackwork (
+    horse_id     TEXT NOT NULL,
+    work_date    DATE NOT NULL,
+    seq          INTEGER NOT NULL,          -- row order on the page (0 = newest)
+    work_type    TEXT NOT NULL,             -- Gallop, Trotting, Swimming, Barrier Trial, Race, ...
+    track        TEXT,                      -- e.g. Sha Tin AWT, Conghua Turf, Sha Tin SmT
+    workout      TEXT,                      -- raw text, e.g. "30.2 25.4 (55.6) (K Teetan)"
+    gear         TEXT,
+    splits       TEXT,                      -- gallops: section times, space-separated
+    time_s       REAL,                      -- gallops: total of the timed sections
+    rider        TEXT,                      -- gallops: rider ("R.B." = track rider)
+    PRIMARY KEY (horse_id, seq)
+);
+CREATE INDEX IF NOT EXISTS trackwork_date ON trackwork (horse_id, work_date);
+
+CREATE TABLE IF NOT EXISTS trackwork_fetched (
+    horse_id     TEXT PRIMARY KEY,
+    fetched      DATE NOT NULL,
+    n_rows       INTEGER NOT NULL
+);
