@@ -106,3 +106,34 @@ CREATE TABLE IF NOT EXISTS standard_times (
     season       TEXT NOT NULL,
     PRIMARY KEY (venue, surface, distance_m, class, season)
 );
+
+-- Barrier trials: one row per batch (heat), and one per horse in it (hkracing.trials).
+CREATE TABLE IF NOT EXISTS trials (
+    trial_id     TEXT PRIMARY KEY,          -- e.g. 2025-09-02_ST_B01
+    trial_date   DATE NOT NULL,
+    venue        TEXT,                      -- Sha Tin / Happy Valley / Conghua
+    batch_no     INTEGER NOT NULL,
+    track        TEXT,                      -- e.g. SHA TIN ALL WEATHER TRACK, SHA TIN TURF
+    surface      TEXT,                      -- TURF / AWT
+    distance_m   INTEGER,
+    going        TEXT,
+    time_s       REAL,                      -- winner's time
+    sectionals   TEXT                       -- leader's sectional times, space-separated
+);
+
+CREATE TABLE IF NOT EXISTS trial_runners (
+    trial_id     TEXT NOT NULL REFERENCES trials(trial_id),
+    horse_id     TEXT NOT NULL,
+    name         TEXT,
+    jockey       TEXT,
+    trainer      TEXT,
+    draw         INTEGER,
+    gear         TEXT,
+    lbw          REAL,
+    running_pos  TEXT,
+    place        INTEGER,                   -- finishing order
+    time_s       REAL,
+    result       TEXT,                      -- e.g. "Passed", "Required to pass barrier trial/OVE"
+    comment      TEXT,
+    PRIMARY KEY (trial_id, horse_id)
+);

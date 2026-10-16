@@ -5,7 +5,9 @@
 A starter is a runner with final win odds (withdrawn horses have none; pulled-up and fallen horses do).
 Form features come from the horse's earlier runs in our results history (speed_figures must be built first,
 see hkracing.speed). Jockey, trainer and draw records use only races on earlier dates.
-Most features are expressed relative to the rest of the field, since the model compares horses within a race.
+Sectional features (finishing speed over the last 400m, race-shape-adjusted figures) come from
+hkracing.sectionals, and barrier trial features from hkracing.trialform. Most features are expressed relative to the rest of the field, since the model compares
+horses within a race.
 """
 from __future__ import annotations
 
@@ -13,6 +15,9 @@ import sqlite3
 
 import numpy as np
 import pandas as pd
+
+from .sectionals import run_measures
+from .trialform import TRIAL_FEATURES, add_trial_features, trial_runs
 
 JOCKEY_PRIOR = 10.0   # A/E shrinkage: pretend each jockey/trainer also had this many expected wins, all par
 STRIKE_PRIOR = 30.0   # same for plain strike rates (wins vs 1/field)
@@ -28,7 +33,10 @@ FEATURES = [
     "jockey_sr", "trainer_sr", "jockey_ae", "trainer_ae",
     "log_days", "log_days2", "first_up", "debut", "log_runs", "won_last", "win_rate",
     "bw_change", "dist_change", "lbw_last", "class_drop", "surface_switch",
-]
+    "close_mean3_rel", "close_last_rel", "late_best5_rel", "fig_pa_mean3_rel",
+] + TRIAL_FEATURES
+
+SECTIONAL_FEATURES = ["close_mean3_rel", "close_last_rel", "late_best5_rel", "fig_pa_mean3_rel"]
 
 
 def _load(conn: sqlite3.Connection) -> pd.DataFrame:
@@ -80,7 +88,17 @@ def _form(df: pd.DataFrame) -> pd.DataFrame:
     df["win_rate"] = (h.won.cumsum() - df.won + 0.5) / (df.runs + 5)  # shrunk career strike rate
     df["surface_switch"] = ((df.surface != prev("surface")) & df.runs.gt(0)).astype(float)
     df["fig_dist"] = _best_at_distance(df)
+    # Sectionals: closing speed against the rest of the field, last-400m figure, race-shape-adjusted figure.
+    df["close_last"] = prev("close_rel")
+    df["close_mean3"] = _rolling_prev(df, h, "close_rel", 3, "mean")
+    df["late_best5"] = _rolling_prev(df, h, "late_fig", 5, "max")
+    df["fig_pa_mean3"] = _rolling_prev(df, h, "fig_pa", 3, "mean")
     return df
+
+
+def _rolling_prev(df: pd.DataFrame, h, col: str, k: int, how: str) -> pd.Series:
+    """Rolling `how` of the horse's previous `k` values of `col` (today's run excluded)."""
+    return h[col].shift(1).groupby(df.horse_id).transform(lambda s: getattr(s.rolling(k, min_periods=1), how)())
 
 
 def _best_at_distance(df: pd.DataFrame, window: int = 8, tol: int = 200) -> pd.Series:
@@ -129,13 +147,16 @@ def _rel(df: pd.DataFrame, col: str) -> pd.Series:
     return (df[col] - mean).fillna(0)
 
 
-def build_features(conn: sqlite3.Connection) -> pd.DataFrame:
-    df = _race_basics(_load(conn))
+def build_features(conn: sqlite3.Connection, fit_before: str = "2019/20") -> pd.DataFrame:
+    """`fit_before`: first walk-forward test season; sectional pars are fitted on the seasons before it."""
+    sec = run_measures(conn, fit_before)[["race_id", "horse_id", "close_rel", "late_fig", "fig_pa"]]
+    df = _race_basics(_load(conn).merge(sec, on=["race_id", "horse_id"], how="left"))
     df = _form(df)
     df["p_uniform"] = 1 / df.field
 
     df["no_fig"] = df.fig_last.isna().astype(float)
-    for col in ("fig_last", "fig_mean3", "fig_best5", "fig_dist"):
+    for col in ("fig_last", "fig_mean3", "fig_best5", "fig_dist", "close_mean3", "close_last", "late_best5",
+                "fig_pa_mean3"):
         df[f"{col}_rel"] = _rel(df, col)
     df["early_rel"] = _rel(df, "early_mean3")
     df["draw_frac"] = ((df.draw - 1) / (df.field - 1).clip(lower=1)).clip(upper=1).fillna(0.5)
@@ -156,4 +177,4 @@ def build_features(conn: sqlite3.Connection) -> pd.DataFrame:
     df["first_up"] = (df.days > 90).astype(float)
     df["log_days2"] = (df.log_days - 3.3) ** 2  # both quick backups and long breaks
     df["log_runs"] = np.log1p(df.runs)
-    return df
+    return add_trial_features(df, trial_runs(conn, fit_before))
