@@ -27,7 +27,8 @@ import pandas as pd
 from scipy.optimize import minimize
 
 from .db import connect
-from .features import FEATURES, build_features
+from .features import FEATURES, SECTIONAL_FEATURES, build_features
+from .trialform import TRIAL_FEATURES
 from .speed import build as build_speed
 
 log = logging.getLogger("hkracing.model")
@@ -185,7 +186,7 @@ def calibration(df: pd.DataFrame, col: str, bins=(0, .02, .05, .1, .15, .2, .3, 
                                             actual=("won", "mean")).reset_index()
 
 
-def report(results, oos, final, path: Path, increment: dict | None = None) -> str:
+def report(results, oos, final, path: Path, increment: list[dict] | None = None) -> str:
     pooled = oos[oos.p_combined.notna()]
     lines = ["# Walk-forward evaluation", "",
              "Pseudo-R² is McFadden's, against a model that gives every runner 1/field. Higher is better.",
@@ -199,8 +200,8 @@ def report(results, oos, final, path: Path, increment: dict | None = None) -> st
               "## Market increment", "",
               "Walk-forward one-stage logit on log market probability plus every feature, against log market "
               "probability alone. Gain is in log-likelihood per race; above zero means the features know "
-              "something the final odds don't.", "",
-              pd.DataFrame([increment]).to_markdown(index=False, floatfmt=".5f") if increment else "(not run)", "",
+              "something the final odds don't. Each row is a separate test with that group of features.", "",
+              pd.DataFrame(increment).to_markdown(index=False, floatfmt=".5f") if increment else "(not run)", "",
               "## Stage A weights (last fit, standardised features)", "",
               pd.DataFrame({"feature": FEATURES, "coef": final.coef_, "se": final.se_,
                             "z": final.coef_ / final.se_}).to_markdown(index=False, floatfmt=".3f"), "",
@@ -233,7 +234,11 @@ def main(argv: list[str] | None = None) -> None:
     df = build_features(conn, args.first_test)
     df = df.sort_values(["race_date", "race_id"], kind="stable").reset_index(drop=True)
     results, oos, final = walk_forward(df, args.first_train, args.first_test, args.l2)
-    increment = market_increment(df, args.first_train, results.season.iloc[1], args.l2)
+    base = [f for f in FEATURES if f not in TRIAL_FEATURES]
+    groups = {"all": FEATURES, "all but trials": base, "sectionals": SECTIONAL_FEATURES,
+              "trials": TRIAL_FEATURES}
+    increment = [{"features": name, **market_increment(df, args.first_train, results.season.iloc[1], args.l2, cols)}
+                 for name, cols in groups.items()]
     print(report(results, oos, final, Path(args.report), increment))
     oos[["race_id", "horse_id", "season", "won", "win_odds", "p_market", "p_model", "p_combined"]] \
         .to_csv(Path(args.report).with_name("walk_forward_predictions.csv.gz"), index=False)
