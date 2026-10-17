@@ -6,7 +6,8 @@ A starter is a runner with final win odds (withdrawn horses have none; pulled-up
 Form features come from the horse's earlier runs in our results history (speed_figures must be built first,
 see hkracing.speed). Jockey, trainer and draw records use only races on earlier dates.
 Sectional features (finishing speed over the last 400m, race-shape-adjusted figures) come from
-hkracing.sectionals, and barrier trial features from hkracing.trialform. Most features are expressed relative to the rest of the field, since the model compares
+hkracing.sectionals, barrier trial features from hkracing.trialform and trackwork features from
+hkracing.trackform. Most features are expressed relative to the rest of the field, since the model compares
 horses within a race.
 """
 from __future__ import annotations
@@ -17,6 +18,7 @@ import numpy as np
 import pandas as pd
 
 from .sectionals import run_measures
+from .trackform import add_trackwork_features, track_work
 from .trialform import TRIAL_FEATURES, add_trial_features, trial_runs
 
 JOCKEY_PRIOR = 10.0   # A/E shrinkage: pretend each jockey/trainer also had this many expected wins, all par
@@ -177,4 +179,5 @@ def build_features(conn: sqlite3.Connection, fit_before: str = "2019/20") -> pd.
     df["first_up"] = (df.days > 90).astype(float)
     df["log_days2"] = (df.log_days - 3.3) ** 2  # both quick backups and long breaks
     df["log_runs"] = np.log1p(df.runs)
-    return add_trial_features(df, trial_runs(conn, fit_before))
+    df = add_trial_features(df, trial_runs(conn, fit_before))
+    return add_trackwork_features(df, track_work(conn))

@@ -28,6 +28,7 @@ from scipy.optimize import minimize
 
 from .db import connect
 from .features import FEATURES, SECTIONAL_FEATURES, build_features
+from .trackform import TRACKWORK_FEATURES
 from .trialform import TRIAL_FEATURES
 from .speed import build as build_speed
 
@@ -169,6 +170,59 @@ def market_increment(df: pd.DataFrame, first_train: str, first_test: str, l2: fl
             "se": gain.std() / np.sqrt(len(gain)), "z": gain.mean() / (gain.std() / np.sqrt(len(gain)))}
 
 
+def covered_starters(df: pd.DataFrame, min_field: int = 4) -> pd.DataFrame:
+    """Each race cut down to its starters with trackwork, where the winner is one of them and at least
+    `min_field` are. HKJC only keeps trackwork for horses still in training, so few races have it for every
+    starter; under the logit, who wins among a subset of the field follows the same model with that smaller
+    choice set, so tests on these subsets stay fair to the market. Caveat: every covered horse is still
+    racing today, so these are survivors' races."""
+    sub = df[df.tw_covered]
+    g = sub.groupby("race_id")
+    return sub[(g.won.transform("sum") > 0.99) & (g.horse_id.transform("size") >= min_field)]
+
+
+def trackwork_increment(df: pd.DataFrame, l2: float = 1.0,
+                        first_test: str = "2025-01") -> tuple[list[dict], pd.DataFrame]:
+    """Does trackwork add to the market among covered starters? Two tests, since covered races only become
+    common from 2024/25: a walk-forward one month at a time from `first_test` (each month fitted on every
+    covered race before it), and an in-sample likelihood-ratio test of all trackwork features at once."""
+    from scipy.stats import chi2
+
+    sub = covered_starters(df).copy()
+    if sub.empty:
+        return [], pd.DataFrame()
+    sub["month"] = sub.race_date.dt.to_period("M")
+    X = lambda d, cols: np.c_[np.log(d.p_market.to_numpy()), d[cols].to_numpy()]
+
+    def race_ll(model, d, cols):
+        _, starts = _groups(d.race_id.to_numpy())
+        p = model.predict(X(d, cols), d.race_id)
+        return np.add.reduceat(d.won.to_numpy() * np.log(np.clip(p, 1e-12, 1)), starts)
+
+    rows = []
+    months = [m for m in sorted(sub.month.unique()) if m >= pd.Period(first_test)]
+    for name, cols in (("trackwork", TRACKWORK_FEATURES),
+                       ("all but trackwork", [f for f in FEATURES if f not in TRACKWORK_FEATURES])):
+        gain = []
+        for m in months:
+            train, test = sub[sub.month < m], sub[sub.month == m]
+            fit = lambda c: ConditionalLogit(l2=l2).fit(X(train, c), train.race_id, train.won)
+            gain.append(race_ll(fit(cols), test, cols) - race_ll(fit([]), test, []))
+        gain = np.concatenate(gain)
+        se = gain.std() / np.sqrt(len(gain))
+        rows.append({"features": f"{name} (covered starters, monthly)", "seasons": f"{months[0]}–{months[-1]}",
+                     "races": len(gain), "gain_per_race": gain.mean(), "se": se, "z": gain.mean() / se})
+    m0 = ConditionalLogit(l2=0.0).fit(X(sub, []), sub.race_id, sub.won)
+    m1 = ConditionalLogit(l2=0.0).fit(X(sub, TRACKWORK_FEATURES), sub.race_id, sub.won)
+    lr = 2 * (race_ll(m1, sub, TRACKWORK_FEATURES).sum() - race_ll(m0, sub, []).sum())
+    rows.append({"features": f"trackwork in-sample LR test: chi² {lr:.1f} on {len(TRACKWORK_FEATURES)} df, "
+                             f"p = {chi2.sf(lr, len(TRACKWORK_FEATURES)):.2f}",
+                 "seasons": f"{sub.season.min()}–{sub.season.max()}", "races": sub.race_id.nunique()})
+    coefs = pd.DataFrame({"feature": ["log p_market"] + TRACKWORK_FEATURES, "coef": m1.coef_, "se": m1.se_,
+                          "z": m1.coef_ / m1.se_})
+    return rows, coefs
+
+
 def betting(df: pd.DataFrame, col: str, edges=(1.0, 1.1, 1.2, 1.3, 1.5)) -> pd.DataFrame:
     """Flat $1 win bets wherever p × final odds exceeds the edge. HK odds include the stake."""
     out = []
@@ -186,7 +240,8 @@ def calibration(df: pd.DataFrame, col: str, bins=(0, .02, .05, .1, .15, .2, .3, 
                                             actual=("won", "mean")).reset_index()
 
 
-def report(results, oos, final, path: Path, increment: list[dict] | None = None) -> str:
+def report(results, oos, final, path: Path, increment: list[dict] | None = None,
+           tw_coefs: pd.DataFrame | None = None) -> str:
     pooled = oos[oos.p_combined.notna()]
     lines = ["# Walk-forward evaluation", "",
              "Pseudo-R² is McFadden's, against a model that gives every runner 1/field. Higher is better.",
@@ -202,6 +257,11 @@ def report(results, oos, final, path: Path, increment: list[dict] | None = None)
               "probability alone. Gain is in log-likelihood per race; above zero means the features know "
               "something the final odds don't. Each row is a separate test with that group of features.", "",
               pd.DataFrame(increment).to_markdown(index=False, floatfmt=".5f") if increment else "(not run)", "",
+              "Trackwork exists only for horses still in training when it was scraped, so trackwork is not in the "
+              "stage A model and is tested only among covered starters (each race cut down to them). "
+              "In-sample weights with the market, standardised features:", "",
+              tw_coefs.to_markdown(index=False, floatfmt=".3f") if tw_coefs is not None and len(tw_coefs)
+              else "(no trackwork)", "",
               "## Stage A weights (last fit, standardised features)", "",
               pd.DataFrame({"feature": FEATURES, "coef": final.coef_, "se": final.se_,
                             "z": final.coef_ / final.se_}).to_markdown(index=False, floatfmt=".3f"), "",
@@ -239,7 +299,9 @@ def main(argv: list[str] | None = None) -> None:
               "trials": TRIAL_FEATURES}
     increment = [{"features": name, **market_increment(df, args.first_train, results.season.iloc[1], args.l2, cols)}
                  for name, cols in groups.items()]
-    print(report(results, oos, final, Path(args.report), increment))
+    tw_rows, tw_coefs = trackwork_increment(df, args.l2)
+    increment += tw_rows
+    print(report(results, oos, final, Path(args.report), increment, tw_coefs))
     oos[["race_id", "horse_id", "season", "won", "win_odds", "p_market", "p_model", "p_combined"]] \
         .to_csv(Path(args.report).with_name("walk_forward_predictions.csv.gz"), index=False)
 

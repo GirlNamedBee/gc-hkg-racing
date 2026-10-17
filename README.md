@@ -21,6 +21,13 @@ See the plan in the project files: `plan/hk-racing-model-plan.md`.
 - `src/hkracing/trialform.py`: a figure for every trial run (time against a trial-course par and day variant),
   flags from the stewards' comment, and per-starter trial features (latest and best trial since the last run,
   trial count, lengths beaten, trial form of first-up horses and debutants).
+- `src/hkracing/trackwork.py`: trackwork (morning work) scraper. One page per horse lists every gallop, trot,
+  swim and treadmill session since it arrived (`trackwork`). HKJC removes the page when a horse retires, so
+  history exists only for horses in training when the scraper runs; re-run it each season to keep it growing.
+- `src/hkracing/trackform.py`: per-starter trackwork features (gallops in the last 14/28 days, days since the
+  last gallop, swims, treadmill and aqua-walker sessions, share of work at Conghua, whether today's jockey rode
+  a recent gallop, gallop speed against the track's norm). They are not in the win model: tested among covered
+  starters they add nothing to the market (see the report).
 - `src/hkracing/features.py`: pre-race features per starter (form figures, sectionals, early speed, draw,
   jockey/trainer, fitness...).
 - `src/hkracing/model.py`: conditional logit win model, combined with the market in a second logit, evaluated
@@ -41,6 +48,7 @@ See the plan in the project files: `plan/hk-racing-model-plan.md`.
     python -m hkracing.scrape --seasons 2016/17 2025/26  # ten seasons
     python -m hkracing.validate
     python -m hkracing.trials --since 2016-08-01           # barrier trials (every date to yesterday)
+    python -m hkracing.trackwork --active-since 2023-09-01 # trackwork of horses still in training
 
 Re-running is cheap: pages already in `data/cache/` are parsed from disk, so the database can be rebuilt
 offline by deleting it and running the same command. `horse_id` is HKJC's full id (e.g. `HK_2022_H108`),
