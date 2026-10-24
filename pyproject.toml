@@ -17,4 +17,4 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-hkracing = ["schema.sql"]
+hkracing = ["schema.sql", "graphql/*.graphql"]
