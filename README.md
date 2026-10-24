@@ -28,6 +28,10 @@ See the plan in the project files: `plan/hk-racing-model-plan.md`.
   last gallop, swims, treadmill and aqua-walker sessions, share of work at Conghua, whether today's jockey rode
   a recent gallop, gallop speed against the track's norm). They are not in the win model: tested among covered
   starters they add nothing to the market (see the report).
+- `src/hkracing/odds.py`: race-day odds recorder. HKJC keeps no odds history (results pages show only the final
+  win odds), so this snapshots the live WIN and PLA odds of local meetings from the betting site's API into
+  `data/odds.db`: every 30 minutes the day before, every 10 minutes on the day, every 3 minutes in the last hour
+  before a race and every minute in the last 15. Odds-movement features need about a season of this.
 - `src/hkracing/features.py`: pre-race features per starter (form figures, sectionals, early speed, draw,
   jockey/trainer, fitness...).
 - `src/hkracing/model.py`: conditional logit win model, combined with the market in a second logit, evaluated
@@ -53,6 +57,16 @@ See the plan in the project files: `plan/hk-racing-model-plan.md`.
 Re-running is cheap: pages already in `data/cache/` are parsed from disk, so the database can be rebuilt
 offline by deleting it and running the same command. `horse_id` is HKJC's full id (e.g. `HK_2022_H108`),
 because brand codes like `H108` get reused over the years.
+
+## Odds recording
+
+    python -m hkracing.odds snapshot                 # one snapshot of every local meeting with odds on sale
+    python -m hkracing.odds watch --minutes 55 --publish /mnt/project-files/gc-hkg-racing/data/odds.db
+
+`watch` keeps snapshotting until the meeting's last race or the time limit, merging into the `--publish` copy
+after each snapshot. It needs `info.cld.hkjc.com` in the environment's allowed domains. The API only accepts the
+exact query text the betting site sends, kept in `src/hkracing/graphql/`; if HKJC changes it, requests fail
+with `WHITELIST_ERROR` and the queries need copying again from bet.hkjc.com's `main.*.js`.
 
 ## Model
 
