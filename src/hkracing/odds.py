@@ -129,6 +129,8 @@ def store_snapshot(conn: sqlite3.Connection, taken_at: str, meeting: dict, pools
     with conn:
         for race in meeting["races"]:
             for r in race.get("runners") or []:
+                if _int(r["no"]) is None:
+                    continue  # standby horse: it gets a number only if it comes into the field
                 conn.execute(
                     "INSERT OR REPLACE INTO odds_runners VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (date, venue, race["no"], _int(r["no"]), (r.get("horse") or {}).get("id"), r.get("name_en"),

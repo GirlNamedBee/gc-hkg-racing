@@ -20,6 +20,8 @@ def test_queries_are_packaged():
 
 def test_store_snapshot():
     d = _fixture()
+    standby = dict(d["meeting"]["races"][0]["runners"][0], no="", standbyNo="1")
+    d["meeting"]["races"][0]["runners"].append(standby)
     conn = connect(":memory:")
     n = store_snapshot(conn, "2026-10-24T08:20:00+08:00", d["meeting"], d["pools"])
     assert n == 2 * (11 + 10)
