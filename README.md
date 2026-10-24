@@ -28,8 +28,12 @@ See the plan in the project files: `plan/hk-racing-model-plan.md`.
   last gallop, swims, treadmill and aqua-walker sessions, share of work at Conghua, whether today's jockey rode
   a recent gallop, gallop speed against the track's norm). They are not in the win model: tested among covered
   starters they add nothing to the market (see the report).
+- `src/hkracing/horses.py`: horse profile scraper (pedigree and the full form record, which carries each run's
+  pre-race rating and declared gear). Retired horses' pages still have the form record, so every horse is fetched.
+- `src/hkracing/gearform.py`: gear features from the declared gear string (first-time, back-on and removed
+  flags for vision gear, tongue tie and any item). Kept in the model; on their own they add nothing to the market.
 - `src/hkracing/features.py`: pre-race features per starter (form figures, sectionals, early speed, draw,
-  jockey/trainer, fitness...).
+  jockey/trainer, fitness, turf vs all-weather aptitude, gear...).
 - `src/hkracing/model.py`: conditional logit win model, combined with the market in a second logit, evaluated
   walk-forward one season at a time. The report also tests whether the features add anything to the market
   odds on their own ("market increment").
@@ -47,6 +51,8 @@ See the plan in the project files: `plan/hk-racing-model-plan.md`.
     python -m hkracing.scrape --season 2024/25           # one season (about 1,700 pages)
     python -m hkracing.scrape --seasons 2016/17 2025/26  # ten seasons
     python -m hkracing.validate
+    python -m hkracing.horses                              # every horse's profile (about 5,800 pages)
+    python -m hkracing.horses --missing                    # only horses with no form record yet
     python -m hkracing.trials --since 2016-08-01           # barrier trials (every date to yesterday)
     python -m hkracing.trackwork --active-since 2023-09-01 # trackwork of horses still in training
 
