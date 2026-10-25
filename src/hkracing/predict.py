@@ -54,8 +54,8 @@ def card_rows(meeting: dict, win_odds: dict[tuple[int, int], float]) -> tuple[li
                       "going": (race.get("go_en") or "").upper(), "post_time": race.get("postTime")})
         for r in race.get("runners") or []:
             no = _int(r["no"])
-            if no is None or r.get("status") != "Declared":
-                continue
+            if no is None or r.get("status") not in ("Declared", "Ran"):
+                continue  # standby or scratched; declared runners show as "Ran" once the race is over
             runners.append({"race_id": rid, "horse_id": r["horse"]["id"], "horse_no": no,
                             "horse_name": r.get("name_en"), "draw": _int(r.get("barrierDrawNumber")),
                             "weight_lb": _int(r.get("handicapWeight")), "body_weight_lb": _int(r.get("currentWeight")),
