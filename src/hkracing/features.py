@@ -7,7 +7,8 @@ Form features come from the horse's earlier runs in our results history (speed_f
 see hkracing.speed). Jockey, trainer and draw records use only races on earlier dates.
 Sectional features (finishing speed over the last 400m, race-shape-adjusted figures) come from
 hkracing.sectionals, barrier trial features from hkracing.trialform, trackwork features from
-hkracing.trackform and gear features from hkracing.gearform. Surface features (turf vs the all-weather
+hkracing.trackform, gear features from hkracing.gearform and course features (Happy Valley vs Sha Tin
+aptitude, and the level of HV form) from hkracing.courseform. Surface features (turf vs the all-weather
 track) compare the horse's figures on today's surface with its figures on the other one. Most features are expressed relative to the rest of the field, since the model compares
 horses within a race.
 """
@@ -18,6 +19,7 @@ import sqlite3
 import numpy as np
 import pandas as pd
 
+from .courseform import COURSE_FEATURES, add_course_features, venue_offset
 from .gearform import GEAR_FEATURES, add_gear_features, runner_gear
 from .sectionals import run_measures
 from .trackform import add_trackwork_features, track_work
@@ -40,7 +42,7 @@ FEATURES = [
     "bw_change", "dist_change", "lbw_last", "class_drop", "surface_switch",
     "close_mean3_rel", "close_last_rel", "late_best5_rel", "fig_pa_mean3_rel",
     "first_surface", "log_surf_runs", "fig_surf_best5_rel", "surf_pref",
-] + TRIAL_FEATURES + GEAR_FEATURES
+] + TRIAL_FEATURES + GEAR_FEATURES + COURSE_FEATURES
 
 SECTIONAL_FEATURES = ["close_mean3_rel", "close_last_rel", "late_best5_rel", "fig_pa_mean3_rel"]
 SURFACE_FEATURES = ["surface_switch", "first_surface", "log_surf_runs", "fig_surf_best5_rel", "surf_pref"]
@@ -213,4 +215,5 @@ def build_features(conn: sqlite3.Connection, fit_before: str = "2019/20") -> pd.
     df["log_runs"] = np.log1p(df.runs)
     df = add_trial_features(df, trial_runs(conn, fit_before))
     df = add_gear_features(df, runner_gear(conn))
+    df = add_course_features(df, venue_offset(df, fit_before))
     return add_trackwork_features(df, track_work(conn))
