@@ -47,6 +47,9 @@ See the plan in the project files: `plan/hk-racing-model-plan.md`.
 - `src/hkracing/model.py`: conditional logit win model, combined with the market in a second logit, evaluated
   walk-forward one season at a time. The report also tests whether the features add anything to the market
   odds on their own ("market increment").
+- `src/hkracing/predict.py`: race-day predictions. Reads the declared runners and current win odds from HKJC's
+  betting API, builds the same features for them, and writes stage A, combined and market probabilities with fair
+  prices; `results` scores them once the races are run.
 - `data/` is git-ignored (raw HTML cache and database).
 
 ## Setup
@@ -85,6 +88,12 @@ with `WHITELIST_ERROR` and the queries need copying again from bet.hkjc.com's `m
     pip install -e ".[model]"
     python -m hkracing.standards     # once a season
     python -m hkracing.model         # rebuilds speed figures, then writes data/reports/walk_forward.md
+
+## Race day
+
+    python -m hkracing.scrape --season 2026/27              # bring this season's results up to date first
+    python -m hkracing.predict card --out data/reports/2026-10-25_ST
+    python -m hkracing.predict results --out data/reports/2026-10-25_ST
 
 ## Data etiquette
 
