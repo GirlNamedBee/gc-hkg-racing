@@ -32,12 +32,18 @@ See the plan in the project files: `plan/hk-racing-model-plan.md`.
   pre-race rating and declared gear). Retired horses' pages still have the form record, so every horse is fetched.
 - `src/hkracing/gearform.py`: gear features from the declared gear string (first-time, back-on and removed
   flags for vision gear, tongue tie and any item). Kept in the model; on their own they add nothing to the market.
+- `src/hkracing/courseform.py`: course preference, Happy Valley vs Sha Tin turf: runs and best figure at
+  today's course, a shrunk figure preference and a wins-vs-market preference, plus course-switch and form-level
+  features (how much of the recent form came from HV when today is at Sha Tin, and the reverse). HV form is a
+  lower level, and HV figures run about a length above Sha Tin ones for the same horse, so that offset (fitted
+  on seasons before the first test season) comes off HV figures first. In the model; on their own they add
+  nothing to the market.
 - `src/hkracing/odds.py`: race-day odds recorder. HKJC keeps no odds history (results pages show only the final
   win odds), so this snapshots the live WIN and PLA odds of local meetings from the betting site's API into
   `data/odds.db`: every 30 minutes the day before, every 10 minutes on the day, every 3 minutes in the last hour
   before a race and every minute in the last 15. Odds-movement features need about a season of this.
 - `src/hkracing/features.py`: pre-race features per starter (form figures, sectionals, early speed, draw,
-  jockey/trainer, fitness, turf vs all-weather aptitude, gear...).
+  jockey/trainer, fitness, turf vs all-weather aptitude, gear, HV vs ST course preference...).
 - `src/hkracing/model.py`: conditional logit win model, combined with the market in a second logit, evaluated
   walk-forward one season at a time. The report also tests whether the features add anything to the market
   odds on their own ("market increment").

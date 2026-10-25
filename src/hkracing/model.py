@@ -28,6 +28,7 @@ from scipy.optimize import minimize
 
 from .db import connect
 from .features import FEATURES, SECTIONAL_FEATURES, SURFACE_FEATURES, build_features
+from .courseform import COURSE_FEATURES, venue_offset
 from .gearform import GEAR_FEATURES
 from .trackform import TRACKWORK_FEATURES
 from .trialform import TRIAL_FEATURES
@@ -251,7 +252,8 @@ def calibration(df: pd.DataFrame, col: str, bins=(0, .02, .05, .1, .15, .2, .3, 
 
 
 def report(results, oos, final, path: Path, increment: list[dict] | None = None,
-           tw_coefs: pd.DataFrame | None = None, coverage: pd.DataFrame | None = None) -> str:
+           tw_coefs: pd.DataFrame | None = None, coverage: pd.DataFrame | None = None,
+           hv_offset: float | None = None) -> str:
     pooled = oos[oos.p_combined.notna()]
     lines = ["# Walk-forward evaluation", "",
              "Pseudo-R² is McFadden's, against a model that gives every runner 1/field. Higher is better.",
@@ -275,6 +277,9 @@ def report(results, oos, final, path: Path, increment: list[dict] | None = None,
               "Gear comes from horse profile pages. Share of starters with known gear by season, and how often "
               "each change flag fires among them:", "",
               coverage.to_markdown(index=False, floatfmt=".3f") if coverage is not None else "(not run)", "",
+              f"Happy Valley figures run {hv_offset:.2f} points above Sha Tin turf figures for the same horse "
+              "(from course switches before the first test season); the course aptitude features take this off "
+              "HV runs." if hv_offset is not None else "", "",
               "## Stage A weights (last fit, standardised features)", "",
               pd.DataFrame({"feature": FEATURES, "coef": final.coef_, "se": final.se_,
                             "z": final.coef_ / final.se_}).to_markdown(index=False, floatfmt=".3f"), "",
@@ -308,15 +313,19 @@ def main(argv: list[str] | None = None) -> None:
     df = df.sort_values(["race_date", "race_id"], kind="stable").reset_index(drop=True)
     results, oos, final = walk_forward(df, args.first_train, args.first_test, args.l2)
     base = [f for f in FEATURES if f not in TRIAL_FEATURES]
-    no_sg = [f for f in FEATURES if f not in SURFACE_FEATURES + GEAR_FEATURES]
-    groups = {"all": FEATURES, "all but trials": base, "all but surface and gear": no_sg,
-              "sectionals": SECTIONAL_FEATURES, "trials": TRIAL_FEATURES, "surface": SURFACE_FEATURES,
-              "gear": GEAR_FEATURES}
+    no_sg = [f for f in FEATURES if f not in SURFACE_FEATURES + GEAR_FEATURES + COURSE_FEATURES]
+    no_course = [f for f in FEATURES if f not in COURSE_FEATURES]
+    groups = {"all": FEATURES, "all but trials": base, "all but course": no_course,
+              "all but surface, gear and course": no_sg, "sectionals": SECTIONAL_FEATURES,
+              "trials": TRIAL_FEATURES, "surface": SURFACE_FEATURES, "gear": GEAR_FEATURES,
+              "course": COURSE_FEATURES}
+    groups.update({f"course: {c}": [c] for c in COURSE_FEATURES})
     increment = [{"features": name, **market_increment(df, args.first_train, results.season.iloc[1], args.l2, cols)}
                  for name, cols in groups.items()]
     tw_rows, tw_coefs = trackwork_increment(df, args.l2)
     increment += tw_rows
-    print(report(results, oos, final, Path(args.report), increment, tw_coefs, gear_coverage(df)))
+    print(report(results, oos, final, Path(args.report), increment, tw_coefs, gear_coverage(df),
+                 venue_offset(df, args.first_test)))
     oos[["race_id", "horse_id", "season", "won", "win_odds", "p_market", "p_model", "p_combined"]] \
         .to_csv(Path(args.report).with_name("walk_forward_predictions.csv.gz"), index=False)
 
