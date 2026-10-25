@@ -6,8 +6,9 @@ A starter is a runner with final win odds (withdrawn horses have none; pulled-up
 Form features come from the horse's earlier runs in our results history (speed_figures must be built first,
 see hkracing.speed). Jockey, trainer and draw records use only races on earlier dates.
 Sectional features (finishing speed over the last 400m, race-shape-adjusted figures) come from
-hkracing.sectionals, barrier trial features from hkracing.trialform and trackwork features from
-hkracing.trackform. Most features are expressed relative to the rest of the field, since the model compares
+hkracing.sectionals, barrier trial features from hkracing.trialform, trackwork features from
+hkracing.trackform and gear features from hkracing.gearform. Surface features (turf vs the all-weather
+track) compare the horse's figures on today's surface with its figures on the other one. Most features are expressed relative to the rest of the field, since the model compares
 horses within a race.
 """
 from __future__ import annotations
@@ -17,6 +18,7 @@ import sqlite3
 import numpy as np
 import pandas as pd
 
+from .gearform import GEAR_FEATURES, add_gear_features, runner_gear
 from .sectionals import run_measures
 from .trackform import add_trackwork_features, track_work
 from .trialform import TRIAL_FEATURES, add_trial_features, trial_runs
@@ -24,6 +26,7 @@ from .trialform import TRIAL_FEATURES, add_trial_features, trial_runs
 JOCKEY_PRIOR = 10.0   # A/E shrinkage: pretend each jockey/trainer also had this many expected wins, all par
 STRIKE_PRIOR = 30.0   # same for plain strike rates (wins vs 1/field)
 DRAW_PRIOR = 30.0
+SURFACE_PRIOR = 3.0   # surf_pref shrinkage, in runs (harmonic mean of the runs on each surface)
 ROLL = "730D"         # jockey/trainer window
 
 # Feature columns fed to the win model, in report order.
@@ -36,9 +39,11 @@ FEATURES = [
     "log_days", "log_days2", "first_up", "debut", "log_runs", "won_last", "win_rate",
     "bw_change", "dist_change", "lbw_last", "class_drop", "surface_switch",
     "close_mean3_rel", "close_last_rel", "late_best5_rel", "fig_pa_mean3_rel",
-] + TRIAL_FEATURES
+    "first_surface", "log_surf_runs", "fig_surf_best5_rel", "surf_pref",
+] + TRIAL_FEATURES + GEAR_FEATURES
 
 SECTIONAL_FEATURES = ["close_mean3_rel", "close_last_rel", "late_best5_rel", "fig_pa_mean3_rel"]
+SURFACE_FEATURES = ["surface_switch", "first_surface", "log_surf_runs", "fig_surf_best5_rel", "surf_pref"]
 
 
 def _load(conn: sqlite3.Connection) -> pd.DataFrame:
@@ -90,6 +95,7 @@ def _form(df: pd.DataFrame) -> pd.DataFrame:
     df["win_rate"] = (h.won.cumsum() - df.won + 0.5) / (df.runs + 5)  # shrunk career strike rate
     df["surface_switch"] = ((df.surface != prev("surface")) & df.runs.gt(0)).astype(float)
     df["fig_dist"] = _best_at_distance(df)
+    df = _surface_form(df)
     # Sectionals: closing speed against the rest of the field, last-400m figure, race-shape-adjusted figure.
     df["close_last"] = prev("close_rel")
     df["close_mean3"] = _rolling_prev(df, h, "close_rel", 3, "mean")
@@ -117,6 +123,32 @@ def _best_at_distance(df: pd.DataFrame, window: int = 8, tol: int = 200) -> pd.S
             if len(vals):
                 out[idx[j]] = vals.max()
     return pd.Series(out, index=df.index)
+
+
+def _surface_form(df: pd.DataFrame, best_of: int = 5) -> pd.DataFrame:
+    """From the horse's earlier runs: how many on today's surface (first_surface if none, after at least one
+    run), best figure in its last `best_of` runs on today's surface, and surf_pref = mean figure on today's
+    surface minus mean figure on the other, shrunk toward 0 when either side has few runs."""
+    n = len(df)
+    surf_runs, best, pref = np.zeros(n), np.full(n, np.nan), np.zeros(n)
+    fig_all, surf_all = df.fig.to_numpy(), df.surface.to_numpy()
+    for _, idx in df.groupby("horse_id", sort=False).indices.items():
+        figs, surfs = fig_all[idx], surf_all[idx]
+        for j in range(1, len(idx)):
+            same = surfs[:j] == surfs[j]
+            surf_runs[idx[j]] = same.sum()
+            f_same, f_other = figs[:j][same], figs[:j][~same]
+            f_same, f_other = f_same[~np.isnan(f_same)], f_other[~np.isnan(f_other)]
+            if len(f_same):
+                best[idx[j]] = f_same[-best_of:].max()
+            if len(f_same) and len(f_other):
+                h = len(f_same) * len(f_other) / (len(f_same) + len(f_other))
+                pref[idx[j]] = (f_same.mean() - f_other.mean()) * h / (h + SURFACE_PRIOR)
+    df["log_surf_runs"] = np.log1p(surf_runs)
+    df["first_surface"] = ((surf_runs == 0) & df.runs.gt(0)).astype(float)
+    df["fig_surf_best5"] = best
+    df["surf_pref"] = pref
+    return df
 
 
 def _ae(df: pd.DataFrame, key: str | list[str], prior: float, window: str | None,
@@ -158,7 +190,7 @@ def build_features(conn: sqlite3.Connection, fit_before: str = "2019/20") -> pd.
 
     df["no_fig"] = df.fig_last.isna().astype(float)
     for col in ("fig_last", "fig_mean3", "fig_best5", "fig_dist", "close_mean3", "close_last", "late_best5",
-                "fig_pa_mean3"):
+                "fig_pa_mean3", "fig_surf_best5"):
         df[f"{col}_rel"] = _rel(df, col)
     df["early_rel"] = _rel(df, "early_mean3")
     df["draw_frac"] = ((df.draw - 1) / (df.field - 1).clip(lower=1)).clip(upper=1).fillna(0.5)
@@ -180,4 +212,5 @@ def build_features(conn: sqlite3.Connection, fit_before: str = "2019/20") -> pd.
     df["log_days2"] = (df.log_days - 3.3) ** 2  # both quick backups and long breaks
     df["log_runs"] = np.log1p(df.runs)
     df = add_trial_features(df, trial_runs(conn, fit_before))
+    df = add_gear_features(df, runner_gear(conn))
     return add_trackwork_features(df, track_work(conn))

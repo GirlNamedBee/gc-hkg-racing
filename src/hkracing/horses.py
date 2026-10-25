@@ -2,8 +2,10 @@
 
     python -m hkracing.horses                  # every horse in the runners table
     python -m hkracing.horses --active-since 2026-01-01
+    python -m hkracing.horses --missing        # only horses with no form record yet (e.g. retired ones)
 
 The profile's form record carries each run's pre-race rating and gear, which the results pages lack.
+Retired horses redirect to an "otherhorse" page that has the same form table, so they parse the same way.
 """
 from __future__ import annotations
 
@@ -116,6 +118,7 @@ def fill_runner_ratings(conn: sqlite3.Connection) -> int:
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--active-since", help="only horses that ran on or after this date (YYYY-MM-DD)")
+    ap.add_argument("--missing", action="store_true", help="skip horses that already have form rows")
     ap.add_argument("--db", default="data/hkracing.db")
     ap.add_argument("--cache", default="data/cache")
     ap.add_argument("--delay", type=float, default=3.0, help="seconds between live requests")
@@ -127,6 +130,8 @@ def main(argv: list[str] | None = None) -> None:
     # Most recently active horses first, so a partial run covers the horses that matter for upcoming races.
     q = ("SELECT u.horse_id FROM runners u GROUP BY u.horse_id"
          + (" HAVING MAX(substr(u.race_id, 1, 10)) >= ?" if args.active_since else "")
+         + (f"{' AND' if args.active_since else ' HAVING'} u.horse_id NOT IN (SELECT horse_id FROM horse_form)"
+            if args.missing else "")
          + " ORDER BY MAX(substr(u.race_id, 1, 10)) DESC")
     horse_ids = [r[0] for r in conn.execute(q, (args.active_since,) if args.active_since else ())]
     log.info("%d horses to fetch", len(horse_ids))
