@@ -52,4 +52,4 @@ def test_model_only_report():
                          "p_combined": float("nan"), "debut": 0.0, "no_fig": 0.0})
     text = card_report(card, {"train_races": 1, "last_train_date": "2026-10-28"}, {"date": "2026-11-01",
                                                                                      "venueCode": "HV"}, "now")
-    assert text.startswith("# Model-only prices") and "| 1.3 " in text and "Market" not in text
+    assert text.startswith("# Model-only prices") and "|    1.3 |" in text and "Market %" not in text
