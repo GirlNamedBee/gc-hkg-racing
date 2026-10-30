@@ -2,6 +2,8 @@
 
     python -m hkracing.predict card    --out data/reports/2026-10-25_ST   # before racing: today's card
     python -m hkracing.predict results --out data/reports/2026-10-25_ST   # after racing: score the predictions
+    python -m hkracing.predict card --no-market --venue HV --out data/reports/2026-11-01_HV_model_only
+                                                                          # before the pools open: model prices only
 
 `card` reads the declared runners (draw, weight, rating, gear, jockey, trainer, declared body weight) and the
 latest win odds from HKJC's betting API (hkracing.odds), adds them to a scratch copy of the database as an
@@ -112,9 +114,16 @@ def stage_b(predictions: Path) -> ConditionalLogit:
 
 
 def predict(db: Path, meeting: dict, win_odds: dict, predictions: Path, first_train: str = "2017/18",
-            l2: float = 1.0) -> tuple[pd.DataFrame, dict]:
+            l2: float = 1.0, no_market: bool = False) -> tuple[pd.DataFrame, dict]:
+    """With no_market, every runner gets placeholder odds equal to its field size, only so it passes the
+    starter filter (a starter is a runner with odds); today's odds are not a feature of today's runners. The
+    market and combined probabilities are then left empty: the prices are stage A's alone."""
     date, venue = meeting["date"], meeting["venueCode"]
     races, runners = card_rows(meeting, win_odds)
+    if no_market:
+        field = pd.Series([u["race_id"] for u in runners]).value_counts()
+        for u in runners:
+            u["win_odds"] = float(field[u["race_id"]])
     missing = [u["horse_name"] for u in runners if not u["win_odds"]]
     if missing:
         log.warning("no win odds yet for %d runners (%s); they are left out", len(missing), ", ".join(missing[:5]))
@@ -134,6 +143,8 @@ def predict(db: Path, meeting: dict, win_odds: dict, predictions: Path, first_tr
     b = stage_b(predictions)
     card["p_model"] = a.predict(card[FEATURES], card.race_id)
     card["p_combined"] = b.predict(np.log(card[["p_model", "p_market"]].to_numpy()), card.race_id)
+    if no_market:
+        card[["win_odds", "p_market", "p_combined"]] = np.nan
     info = {"train_races": train.race_id.nunique(), "last_train_date": train.race_date.max().date().isoformat(),
             "alpha": b.coef_[0], "gamma": b.coef_[1]}
     extra = pd.DataFrame(runners)[["race_id", "horse_id", "horse_no", "horse_name"]]
@@ -148,6 +159,8 @@ def _price(p: float) -> str:
 
 
 def card_report(card: pd.DataFrame, info: dict, meeting: dict, taken_at: str) -> str:
+    if card.p_market.isna().all():
+        return model_only_report(card, info, meeting, taken_at)
     lines = [f"# Predictions: {meeting['date']} {meeting['venueCode']}", "",
              f"Odds taken {taken_at}. Stage A fitted on {info['train_races']} races up to {info['last_train_date']}; "
              f"stage B weights: model {info['alpha']:.3f}, market {info['gamma']:.3f}.", "",
@@ -168,6 +181,24 @@ def card_report(card: pd.DataFrame, info: dict, meeting: dict, taken_at: str) ->
             "Note": np.where(r.debut > 0, "debut", np.where(r.no_fig > 0, "no figure", ""))})
         t = t.sort_values("Combined %", ascending=False)
         lines += [t.to_markdown(index=False, floatfmt=".2f"), ""]
+    return "\n".join(lines)
+
+
+def model_only_report(card: pd.DataFrame, info: dict, meeting: dict, taken_at: str) -> str:
+    lines = [f"# Model-only prices: {meeting['date']} {meeting['venueCode']}", "",
+             f"Priced {taken_at} from the fundamentals model (stage A) alone, with no market input. Stage A fitted "
+             f"on {info['train_races']} races up to {info['last_train_date']}.", "",
+             "Probabilities are in percent. Fair = 1 / model probability (HK odds include the stake), with no "
+             "takeout added. Walk-forward, stage A alone is well behind the market (McFadden R² about 0.13 "
+             "against 0.19), so these are the form book's prices, not betting advice.", ""]
+    for race_no, r in card.groupby("race_no"):
+        first = r.iloc[0]
+        lines += [f"## Race {race_no}: {first['class']}, {first.distance_m}m", ""]
+        t = pd.DataFrame({
+            "No": r.horse_no, "Horse": r.horse_name, "Dr": r.draw, "Jockey": r.jockey, "Trainer": r.trainer,
+            "Rtg": r.rating, "Model %": 100 * r.p_model, "Fair": [_price(p) for p in r.p_model],
+            "Note": np.where(r.debut > 0, "debut", np.where(r.no_fig > 0, "no figure", ""))})
+        lines += [t.sort_values("Model %", ascending=False).to_markdown(index=False, floatfmt=".1f"), ""]
     return "\n".join(lines)
 
 
@@ -220,6 +251,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--predictions", default="data/reports/walk_forward_predictions.csv.gz", type=Path)
     ap.add_argument("--out", required=True, type=Path, help="output prefix, e.g. data/reports/2026-10-25_ST")
     ap.add_argument("--venue", choices=["ST", "HV"], help="when two local meetings are listed")
+    ap.add_argument("--no-market", action="store_true", help="card: price from the model alone, ignoring odds")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     client = OddsClient()
@@ -231,8 +263,8 @@ def main(argv: list[str] | None = None) -> None:
     csv = args.out.with_name(args.out.name + "_predictions.csv")
     if args.command == "card":
         taken_at = datetime.now(HKT).isoformat(timespec="minutes")
-        odds = current_win_odds(client, meeting["date"], meeting["venueCode"])
-        card, info = predict(args.db, meeting, odds, args.predictions)
+        odds = {} if args.no_market else current_win_odds(client, meeting["date"], meeting["venueCode"])
+        card, info = predict(args.db, meeting, odds, args.predictions, no_market=args.no_market)
         card.assign(odds_taken_at=taken_at).to_csv(csv, index=False)
         text = card_report(card, info, meeting, taken_at)
         args.out.with_name(args.out.name + "_card.md").write_text(text)
