@@ -42,3 +42,14 @@ def test_scorecard_with_no_results_yet():
     card = pd.DataFrame({"race_id": ["2026-10-24_S1_R01"], "horse_id": ["x"]})
     _, text = scorecard(card, d["meeting"])
     assert text == "No results yet."
+
+
+def test_model_only_report():
+    from hkracing.predict import card_report
+    card = pd.DataFrame({"race_no": [1, 1], "class": "Class 4", "distance_m": 1200, "horse_no": [1, 2],
+                         "horse_name": ["A", "B"], "draw": [1, 2], "jockey": "J", "trainer": "T", "rating": 50,
+                         "win_odds": float("nan"), "p_market": float("nan"), "p_model": [0.75, 0.25],
+                         "p_combined": float("nan"), "debut": 0.0, "no_fig": 0.0})
+    text = card_report(card, {"train_races": 1, "last_train_date": "2026-10-28"}, {"date": "2026-11-01",
+                                                                                     "venueCode": "HV"}, "now")
+    assert text.startswith("# Model-only prices") and "|    1.3 |" in text and "Market %" not in text
